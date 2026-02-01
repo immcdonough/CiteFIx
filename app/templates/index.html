@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CiteFix - Citation Formatting & Validation</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #16a34a;
+            --warning: #ca8a04;
+            --error: #dc2626;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .label-hint {
+            font-weight: normal;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        input[type="file"]:hover {
+            border-color: var(--primary);
+        }
+
+        select, input[type="email"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-family: monospace;
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .checkbox-item input {
+            width: 1.1rem;
+            height: 1.1rem;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.875rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: var(--primary-dark);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #results {
+            display: none;
+        }
+
+        #results.show {
+            display: block;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: #dcfce7;
+            color: var(--success);
+        }
+
+        .status-warning {
+            background: #fef3c7;
+            color: var(--warning);
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: var(--error);
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 1rem;
+            background: var(--bg);
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .issues-list {
+            list-style: none;
+        }
+
+        .issue-item {
+            padding: 0.75rem;
+            border-left: 3px solid var(--warning);
+            background: #fffbeb;
+            margin-bottom: 0.5rem;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .issue-item.error {
+            border-left-color: var(--error);
+            background: #fef2f2;
+        }
+
+        .issue-type {
+            font-weight: 500;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .issue-text {
+            margin: 0.25rem 0;
+        }
+
+        .issue-suggestion {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .download-btn {
+            background: var(--success);
+            margin-top: 1rem;
+        }
+
+        .download-btn:hover {
+            background: #15803d;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .example-toggle {
+            margin-top: 0.5rem;
+        }
+
+        #exampleSection {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        #exampleSection.show {
+            display: block;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CiteFix</h1>
+            <p class="subtitle">Format citations, resolve DOIs, and validate references</p>
+        </header>
+
+        <form id="processForm" enctype="multipart/form-data">
+            <div class="card">
+                <h2>Upload Document</h2>
+                <div class="form-group">
+                    <label for="file">Word Document (.docx)</label>
+                    <input type="file" id="file" name="file" accept=".docx" required>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Citation Style</h2>
+                <div class="form-group">
+                    <label for="style">Select Style</label>
+                    <select id="style" name="style">
+                        <option value="apa">APA (7th Edition)</option>
+                        <option value="mla">MLA (9th Edition)</option>
+                        <option value="chicago-author-date">Chicago (Author-Date)</option>
+                        <option value="harvard1">Harvard</option>
+                        <option value="vancouver">Vancouver</option>
+                        <option value="ieee">IEEE</option>
+                        <option value="custom">Custom (from examples)</option>
+                    </select>
+                </div>
+
+                <div class="form-group example-toggle">
+                    <label class="checkbox-item">
+                        <input type="checkbox" id="useExamples" onchange="toggleExamples()">
+                        <span>Or provide example citations to learn format</span>
+                    </label>
+                </div>
+
+                <div id="exampleSection">
+                    <div class="form-group">
+                        <label for="example_citations">
+                            Example Citations
+                            <span class="label-hint">(one per line, 2-3 examples recommended)</span>
+                        </label>
+                        <textarea id="example_citations" name="example_citations"
+                            placeholder="Smith, J. A. (2020). Article title. Journal Name, 10(2), 45-67.&#10;Jones, B. & Williams, C. (2019). Book title. Publisher."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Options</h2>
+                <div class="checkbox-group">
+                    <label class="checkbox-item">
+                        <input type="checkbox" name="format_citations_opt" checked>
+                        <span>Reformat citations</span>
+                    </label>
+                    <label class="checkbox-item">
+                        <input type="checkbox" name="resolve_dois" checked>
+                        <span>Look up DOIs</span>
+                    </label>
+                    <label class="checkbox-item">
+                        <input type="checkbox" name="validate_citations_opt" checked>
+                        <span>Validate citations</span>
+                    </label>
+                </div>
+
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label for="crossref_email">
+                        Email for CrossRef
+                        <span class="label-hint">(optional, enables faster API access)</span>
+                    </label>
+                    <input type="email" id="crossref_email" name="crossref_email"
+                        placeholder="your@email.com">
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn">Process Document</button>
+        </form>
+
+        <div id="quickCheck" class="card" style="display: none; border-left: 4px solid var(--warning);">
+            <h2>Quick Check Results</h2>
+            <p id="quickCheckMessage"></p>
+            <div style="margin-top: 1rem;">
+                <label class="checkbox-item">
+                    <input type="checkbox" id="enableWebSearch" name="enable_web_search" checked>
+                    <span>Enable web search for missing citations (recommended)</span>
+                </label>
+            </div>
+            <button type="button" id="proceedBtn" style="margin-top: 1rem;">Proceed with Processing</button>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p id="loadingMessage">Processing your document...</p>
+            <p class="label-hint" id="loadingHint">This may take a minute if resolving DOIs</p>
+        </div>
+
+        <div id="results" class="card">
+            <div class="result-header">
+                <h2>Results</h2>
+                <span id="statusBadge" class="status-badge"></span>
+            </div>
+
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="citationsFound">0</div>
+                    <div class="stat-label">Citations Found</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="referencesFound">0</div>
+                    <div class="stat-label">References</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="doisResolved">0</div>
+                    <div class="stat-label">DOIs Added</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="issuesFound">0</div>
+                    <div class="stat-label">Issues</div>
+                </div>
+            </div>
+
+            <div id="issuesSection" style="display: none;">
+                <h3 style="margin-bottom: 0.5rem;">Issues Found</h3>
+                <ul class="issues-list" id="issuesList"></ul>
+            </div>
+
+            <button id="downloadBtn" class="download-btn" style="display: none;">
+                Download Processed Document
+            </button>
+        </div>
+    </div>
+
+    <footer>
+        <p>CiteFix v0.1.0 - Citation formatting and validation tool</p>
+    </footer>
+
+    <script>
+        function toggleExamples() {
+            const checkbox = document.getElementById('useExamples');
+            const section = document.getElementById('exampleSection');
+            const styleSelect = document.getElementById('style');
+
+            if (checkbox.checked) {
+                section.classList.add('show');
+                styleSelect.value = 'custom';
+            } else {
+                section.classList.remove('show');
+            }
+        }
+
+        document.getElementById('style').addEventListener('change', function() {
+            const checkbox = document.getElementById('useExamples');
+            const section = document.getElementById('exampleSection');
+
+            if (this.value === 'custom') {
+                checkbox.checked = true;
+                section.classList.add('show');
+            }
+        });
+
+        let quickCheckData = null;
+
+        document.getElementById('processForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const form = this;
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const quickCheck = document.getElementById('quickCheck');
+
+            // First do a quick check
+            submitBtn.disabled = true;
+            loading.classList.add('show');
+            document.getElementById('loadingMessage').textContent = 'Analyzing document...';
+            document.getElementById('loadingHint').textContent = 'Checking citations and references';
+            results.classList.remove('show');
+            quickCheck.style.display = 'none';
+
+            try {
+                const formData = new FormData(form);
+
+                // Quick check first
+                const checkResponse = await fetch('/api/quick-check', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!checkResponse.ok) {
+                    const err = await checkResponse.json();
+                    throw new Error(err.detail || 'Quick check failed');
+                }
+
+                quickCheckData = await checkResponse.json();
+                loading.classList.remove('show');
+
+                // If there are unmatched citations, show the estimate
+                if (quickCheckData.unmatched > 3) {
+                    const msg = `Found ${quickCheckData.total_citations} citations, ${quickCheckData.matched} matched, ` +
+                        `<strong>${quickCheckData.unmatched} unmatched</strong>.<br><br>` +
+                        `Web search for missing citations will take approximately <strong>${quickCheckData.estimated_time}</strong>.`;
+                    document.getElementById('quickCheckMessage').innerHTML = msg;
+                    quickCheck.style.display = 'block';
+                    submitBtn.disabled = false;
+                } else {
+                    // Few unmatched, proceed directly
+                    await processDocument(form, true);
+                }
+
+            } catch (error) {
+                alert('Error: ' + error.message);
+                submitBtn.disabled = false;
+                loading.classList.remove('show');
+            }
+        });
+
+        document.getElementById('proceedBtn').addEventListener('click', async function() {
+            const form = document.getElementById('processForm');
+            const enableWebSearch = document.getElementById('enableWebSearch').checked;
+            document.getElementById('quickCheck').style.display = 'none';
+            await processDocument(form, enableWebSearch);
+        });
+
+        async function processDocument(form, enableWebSearch) {
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+
+            submitBtn.disabled = true;
+            loading.classList.add('show');
+
+            if (enableWebSearch && quickCheckData && quickCheckData.unmatched > 0) {
+                document.getElementById('loadingMessage').textContent = 'Processing document...';
+                document.getElementById('loadingHint').textContent =
+                    `Searching for ${quickCheckData.unmatched} missing citations (${quickCheckData.estimated_time})`;
+            } else {
+                document.getElementById('loadingMessage').textContent = 'Processing document...';
+                document.getElementById('loadingHint').textContent = 'This should only take a moment';
+            }
+
+            try {
+                const formData = new FormData(form);
+                formData.set('enable_web_search', enableWebSearch);
+
+                const response = await fetch('/api/process', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Processing failed');
+                }
+
+                displayResults(data);
+
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                loading.classList.remove('show');
+            }
+        }
+
+        function displayResults(data) {
+            const results = document.getElementById('results');
+            results.classList.add('show');
+
+            // Update stats
+            document.getElementById('citationsFound').textContent = data.citations_found;
+            document.getElementById('doisResolved').textContent = data.dois_resolved;
+
+            const report = data.validation_report;
+            if (report) {
+                document.getElementById('referencesFound').textContent = report.total_references;
+                document.getElementById('issuesFound').textContent = report.issues.length;
+
+                // Update status badge
+                const badge = document.getElementById('statusBadge');
+                if (report.is_valid) {
+                    badge.textContent = 'Valid';
+                    badge.className = 'status-badge status-success';
+                } else {
+                    badge.textContent = `${report.issues.length} Issues`;
+                    badge.className = 'status-badge status-warning';
+                }
+
+                // Display issues
+                const issuesSection = document.getElementById('issuesSection');
+                const issuesList = document.getElementById('issuesList');
+
+                if (report.issues.length > 0) {
+                    issuesSection.style.display = 'block';
+                    issuesList.innerHTML = report.issues.map(issue => `
+                        <li class="issue-item ${issue.issue_type === 'missing_reference' ? 'error' : ''}">
+                            <div class="issue-type">${issue.issue_type.replace(/_/g, ' ')}</div>
+                            <div class="issue-text">${issue.description}</div>
+                            ${issue.citation_text ? `<div class="issue-text"><code>${escapeHtml(issue.citation_text)}</code></div>` : ''}
+                            ${issue.suggestion ? `<div class="issue-suggestion" style="white-space: pre-line;">${escapeHtml(issue.suggestion)}</div>` : ''}
+                        </li>
+                    `).join('');
+                } else {
+                    issuesSection.style.display = 'none';
+                }
+            }
+
+            // Show download button
+            if (data.output_filename) {
+                const downloadBtn = document.getElementById('downloadBtn');
+                downloadBtn.style.display = 'block';
+                downloadBtn.onclick = () => {
+                    window.location.href = `/api/download/${data.output_filename}`;
+                };
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
