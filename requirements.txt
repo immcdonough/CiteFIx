@@ -10,6 +10,11 @@ pydantic>=2.5.0
 aiofiles>=23.2.0
 httpx>=0.26.0
 
+# New feature dependencies
+rapidfuzz>=3.5.0
+bibtexparser>=1.4.0
+rispy>=0.7.0
+
 # Development dependencies
 pytest>=7.4.0
 pytest-asyncio>=0.23.0
