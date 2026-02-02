@@ -10,16 +10,24 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.models.schemas import (
+    BibFormat,
     Citation,
     CitationStyle,
+    ExportResult,
+    ImportResult,
     ProcessingOptions,
     ProcessingResult,
+    ReferenceManagerType,
+    ValidationIssue,
     ValidationReport,
 )
 from app.services.citation_detector import detect_citations, parse_references
 from app.services.citation_formatter import format_citations_batch
 from app.services.docx_parser import parse_docx, update_docx_references
 from app.services.doi_resolver import DOIResolver
+from app.services.bibliography_exporter import export_references
+from app.services.reference_importer import ReferenceImporter, compare_with_document
+from app.services.retraction_checker import RetractionChecker
 from app.services.validator import (
     generate_validation_summary,
     validate_citations,
@@ -77,6 +85,10 @@ async def process_document(
     format_citations_opt: bool = Form(True),
     crossref_email: Optional[str] = Form(None),
     enable_web_search: bool = Form(True),
+    check_completeness: bool = Form(True),
+    detect_duplicates: bool = Form(True),
+    check_retractions: bool = Form(False),
+    check_journal_names: bool = Form(True),
 ):
     """
     Process a Word document to format citations, resolve DOIs, and validate.
@@ -89,6 +101,11 @@ async def process_document(
         validate_citations_opt: Whether to validate citation coverage
         format_citations_opt: Whether to reformat citations
         crossref_email: Email for CrossRef polite pool (faster API access)
+        enable_web_search: Whether to search web for unmatched citations
+        check_completeness: Whether to check for incomplete references
+        detect_duplicates: Whether to use advanced duplicate detection
+        check_retractions: Whether to check for retracted papers (slower)
+        check_journal_names: Whether to check for inconsistent journal naming
 
     Returns:
         ProcessingResult with validation report and output file info
@@ -144,6 +161,11 @@ async def process_document(
                 references,
                 detection.detected_type,
                 enable_web_search=enable_web_search,
+                check_completeness=check_completeness,
+                detect_duplicates_advanced=detect_duplicates,
+                check_retractions=check_retractions,
+                check_journal_names=check_journal_names,
+                retraction_checker_email=crossref_email,
             )
 
         # Format citations if requested
@@ -255,3 +277,149 @@ async def list_styles():
             {"id": "custom", "name": "Custom", "description": "Learn from example citations"},
         ]
     }
+
+
+@router.post("/export", response_model=ExportResult)
+async def export_bibliography(
+    file: UploadFile = File(...),
+    format: BibFormat = Form(BibFormat.BIBTEX),
+):
+    """
+    Export references from a document to BibTeX or RIS format.
+
+    Args:
+        file: The .docx file containing references
+        format: Output format (bibtex or ris)
+
+    Returns:
+        ExportResult with formatted bibliography content
+    """
+    if not file.filename or not file.filename.endswith(".docx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .docx files are supported",
+        )
+
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        parsed = parse_docx(tmp_path)
+        references = parse_references(parsed.reference_entries)
+
+        if not references:
+            raise HTTPException(
+                status_code=400,
+                detail="No references found in document",
+            )
+
+        result = export_references(references, format)
+        return result
+
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@router.post("/import", response_model=ImportResult)
+async def import_and_compare(
+    document: UploadFile = File(...),
+    library: UploadFile = File(...),
+    manager_type: ReferenceManagerType = Form(ReferenceManagerType.ZOTERO),
+):
+    """
+    Import references from a reference manager and compare with document.
+
+    Args:
+        document: The .docx file containing document references
+        library: Export file from reference manager (JSON for Zotero, BibTeX for Mendeley, RIS for EndNote)
+        manager_type: Type of reference manager used
+
+    Returns:
+        ImportResult with comparison statistics
+    """
+    if not document.filename or not document.filename.endswith(".docx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be a .docx file",
+        )
+
+    # Create temp files
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as doc_tmp:
+        shutil.copyfileobj(document.file, doc_tmp)
+        doc_path = Path(doc_tmp.name)
+
+    library_content = (await library.read()).decode("utf-8")
+
+    try:
+        # Parse document references
+        parsed = parse_docx(doc_path)
+        doc_refs = parse_references(parsed.reference_entries)
+
+        # Import library references
+        importer = ReferenceImporter()
+        library_refs = importer.import_content(library_content, manager_type)
+
+        # Compare
+        result = compare_with_document(library_refs, doc_refs)
+        return result
+
+    finally:
+        doc_path.unlink(missing_ok=True)
+
+
+@router.post("/check-retractions")
+async def check_retractions(
+    file: UploadFile = File(...),
+    crossref_email: Optional[str] = Form(None),
+):
+    """
+    Check references for retracted papers using CrossRef API.
+
+    Args:
+        file: The .docx file containing references
+        crossref_email: Email for CrossRef polite pool (faster API access)
+
+    Returns:
+        List of retraction issues and statistics
+    """
+    if not file.filename or not file.filename.endswith(".docx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .docx files are supported",
+        )
+
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        parsed = parse_docx(tmp_path)
+        references = parse_references(parsed.reference_entries)
+
+        if not references:
+            raise HTTPException(
+                status_code=400,
+                detail="No references found in document",
+            )
+
+        checker = RetractionChecker(email=crossref_email)
+        issues = checker.check_references(references)
+        stats = checker.get_retraction_stats(references)
+
+        return {
+            "issues": [
+                {
+                    "type": issue.issue_type,
+                    "description": issue.description,
+                    "citation": issue.citation_text,
+                    "suggestion": issue.suggestion,
+                    "severity": issue.severity.value,
+                }
+                for issue in issues
+            ],
+            "statistics": stats,
+        }
+
+    finally:
+        tmp_path.unlink(missing_ok=True)

@@ -24,6 +24,26 @@ class CitationType(str, Enum):
     AUTHOR_YEAR_INLINE = "author_inline"  # Smith (2020)
 
 
+class IssueSeverity(str, Enum):
+    """Severity levels for validation issues."""
+    ERROR = "error"      # Must fix (missing reference, retracted paper)
+    WARNING = "warning"  # Should review (duplicate, incomplete)
+    INFO = "info"        # Informational (normalization suggestion)
+
+
+class BibFormat(str, Enum):
+    """Bibliography export formats."""
+    BIBTEX = "bibtex"
+    RIS = "ris"
+
+
+class ReferenceManagerType(str, Enum):
+    """Supported reference manager types."""
+    ZOTERO = "zotero"
+    MENDELEY = "mendeley"
+    ENDNOTE = "endnote"
+
+
 class Citation(BaseModel):
     """Represents a single citation reference."""
     id: str = Field(..., description="Unique identifier for this citation")
@@ -52,10 +72,12 @@ class InTextCitation(BaseModel):
 
 class ValidationIssue(BaseModel):
     """A validation issue found in the document."""
-    issue_type: str = Field(..., description="Type: missing_reference, uncited, duplicate")
+    issue_type: str = Field(..., description="Type: missing_reference, uncited, duplicate, incomplete_reference, potential_duplicate, retracted_reference")
     description: str
     citation_text: Optional[str] = None
     suggestion: Optional[str] = None
+    severity: IssueSeverity = Field(default=IssueSeverity.WARNING, description="Issue severity level")
+    related_references: list[str] = Field(default_factory=list, description="Related reference IDs (for duplicates)")
 
 
 class ValidationReport(BaseModel):
@@ -74,6 +96,10 @@ class ProcessingOptions(BaseModel):
     resolve_dois: bool = Field(default=True, description="Look up DOIs via CrossRef")
     validate_citations: bool = Field(default=True, description="Check citation coverage")
     format_citations: bool = Field(default=True, description="Reformat citations")
+    # New validation options
+    check_completeness: bool = Field(default=True, description="Check for missing fields in references")
+    detect_duplicates: bool = Field(default=True, description="Enhanced duplicate detection")
+    check_retractions: bool = Field(default=False, description="Check for retracted papers (slower)")
 
 
 class ProcessingResult(BaseModel):
@@ -84,3 +110,20 @@ class ProcessingResult(BaseModel):
     citations_found: int = 0
     dois_resolved: int = 0
     output_filename: Optional[str] = None
+
+
+class ExportResult(BaseModel):
+    """Result of bibliography export."""
+    format: BibFormat
+    content: str
+    entry_count: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ImportResult(BaseModel):
+    """Result of reference manager import comparison."""
+    imported_count: int = Field(description="Number of references imported from file")
+    matched_count: int = Field(description="References matched to document")
+    unmatched_document_refs: list[str] = Field(default_factory=list, description="In document but not in manager")
+    unmatched_import_refs: list[str] = Field(default_factory=list, description="In manager but not in document")
+    suggestions: list[str] = Field(default_factory=list)

@@ -26,13 +26,24 @@ class TestValidateCitations:
         references = [
             Citation(
                 id="smith_2020",
-                raw_text="Smith, J. (2020). Title. Journal.",
+                raw_text="Smith, J. (2020). Title. Journal, 10(2), 45-67.",
                 authors=["Smith, J."],
+                title="Title",
                 year=2020,
+                journal="Journal",
+                volume="10",
+                issue="2",
+                pages="45-67",
             )
         ]
 
-        report = validate_citations(in_text, references)
+        # Disable advanced checks to test basic matching
+        report = validate_citations(
+            in_text, references,
+            check_completeness=False,
+            detect_duplicates_advanced=False,
+            check_journal_names=False,
+        )
 
         assert report.is_valid
         assert report.total_in_text_citations == 1
@@ -119,10 +130,11 @@ class TestValidateCitations:
             ),
         ]
 
-        report = validate_citations(in_text, references)
+        report = validate_citations(in_text, references, check_completeness=False, check_journal_names=False)
 
         issue_types = [i.issue_type for i in report.issues]
-        assert "duplicate_reference" in issue_types
+        # Advanced duplicate detector uses "potential_duplicate" type
+        assert "potential_duplicate" in issue_types or "duplicate_reference" in issue_types
 
 
 class TestValidationSummary:

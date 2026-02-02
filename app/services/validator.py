@@ -8,10 +8,14 @@ from app.models.schemas import (
     Citation,
     CitationType,
     InTextCitation,
+    IssueSeverity,
     ValidationIssue,
     ValidationReport,
 )
 from app.services.citation_detector import match_citations_to_references
+from app.services.completeness_checker import check_reference_completeness
+from app.services.duplicate_detector import detect_duplicates
+from app.services.journal_normalizer import check_journal_consistency
 
 
 @dataclass
@@ -76,6 +80,11 @@ def validate_citations(
     citation_type: CitationType = CitationType.AUTHOR_YEAR,
     enable_web_search: bool = True,
     progress_callback: Optional[callable] = None,
+    check_completeness: bool = True,
+    detect_duplicates_advanced: bool = True,
+    check_retractions: bool = False,
+    check_journal_names: bool = True,
+    retraction_checker_email: Optional[str] = None,
 ) -> ValidationReport:
     """
     Validate that all citations match references and vice versa.
@@ -84,6 +93,13 @@ def validate_citations(
         in_text_citations: List of in-text citations found
         references: List of reference entries
         citation_type: Type of citation system used
+        enable_web_search: Whether to search CrossRef for unmatched citations
+        progress_callback: Optional callback for progress updates
+        check_completeness: Whether to check for incomplete references
+        detect_duplicates_advanced: Whether to use advanced duplicate detection
+        check_retractions: Whether to check for retracted papers (requires internet)
+        check_journal_names: Whether to check for inconsistent journal naming
+        retraction_checker_email: Email for CrossRef polite pool (faster rate limits)
 
     Returns:
         ValidationReport with findings
@@ -150,15 +166,21 @@ def validate_citations(
             suggestion=suggestion,
         ))
 
-    # Check for duplicate references
-    duplicates = _find_duplicate_references(references)
-    for dup_group in duplicates:
-        issues.append(ValidationIssue(
-            issue_type="duplicate_reference",
-            description=f"Possible duplicate references found",
-            citation_text="; ".join(r.id for r in dup_group),
-            suggestion="Review and merge these references if they are duplicates",
-        ))
+    # Check for duplicate references (use advanced detection if enabled)
+    if detect_duplicates_advanced:
+        # Advanced duplicate detection with fuzzy matching
+        duplicate_issues = detect_duplicates(references)
+        issues.extend(duplicate_issues)
+    else:
+        # Simple duplicate detection (legacy)
+        duplicates = _find_duplicate_references(references)
+        for dup_group in duplicates:
+            issues.append(ValidationIssue(
+                issue_type="duplicate_reference",
+                description=f"Possible duplicate references found",
+                citation_text="; ".join(r.id for r in dup_group),
+                suggestion="Review and merge these references if they are duplicates",
+            ))
 
     # Check for citation format consistency
     format_issues = _check_format_consistency(in_text_citations)
@@ -167,6 +189,23 @@ def validate_citations(
     # Check for "and" instead of "&" in parenthetical citations
     ampersand_issues = _check_ampersand_usage(in_text_citations)
     issues.extend(ampersand_issues)
+
+    # Check for incomplete references (missing required fields)
+    if check_completeness:
+        completeness_issues = check_reference_completeness(references)
+        issues.extend(completeness_issues)
+
+    # Check for inconsistent journal naming
+    if check_journal_names:
+        journal_issues = check_journal_consistency(references)
+        issues.extend(journal_issues)
+
+    # Check for retracted papers (requires internet access)
+    if check_retractions:
+        from app.services.retraction_checker import RetractionChecker
+        retraction_checker = RetractionChecker(email=retraction_checker_email)
+        retraction_issues = retraction_checker.check_references(references)
+        issues.extend(retraction_issues)
 
     # Calculate matched count (includes both exact and fuzzy matches)
     matched_count = len([c for c in in_text_citations if match_result.matches.get(c.text)])
