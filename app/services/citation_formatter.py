@@ -30,6 +30,8 @@ class FormatPattern:
 
 
 # Built-in style templates
+# Note: journal_italic is disabled for all styles because output goes to Word
+# where markdown asterisks won't render. Users can manually italicize if needed.
 STYLE_TEMPLATES: dict[CitationStyle, FormatPattern] = {
     CitationStyle.APA: FormatPattern(
         author_format="{last}, {first_init}.",
@@ -40,7 +42,7 @@ STYLE_TEMPLATES: dict[CitationStyle, FormatPattern] = {
         title_style="sentence",
         title_quotes=False,
         title_italic=False,
-        journal_italic=True,
+        journal_italic=False,  # Disabled - asterisks don't render in Word
         journal_volume_format="",  # APA uses separate parts
         volume_format="{volume}({issue})",
         pages_format="{pages}",
@@ -55,7 +57,7 @@ STYLE_TEMPLATES: dict[CitationStyle, FormatPattern] = {
         title_style="title",
         title_quotes=True,
         title_italic=False,
-        journal_italic=True,
+        journal_italic=False,  # Disabled - asterisks don't render in Word
         journal_volume_format="",
         volume_format="vol. {volume}, no. {issue}",
         pages_format="pp. {pages}",
@@ -70,7 +72,7 @@ STYLE_TEMPLATES: dict[CitationStyle, FormatPattern] = {
         title_style="title",
         title_quotes=True,
         title_italic=False,
-        journal_italic=True,
+        journal_italic=False,  # Disabled - asterisks don't render in Word
         journal_volume_format="",
         volume_format="{volume}, no. {issue}",
         pages_format="{pages}",
@@ -100,7 +102,7 @@ STYLE_TEMPLATES: dict[CitationStyle, FormatPattern] = {
         title_style="sentence",
         title_quotes=True,
         title_italic=False,
-        journal_italic=True,
+        journal_italic=False,  # Disabled - asterisks don't render in Word
         journal_volume_format="",
         volume_format="vol. {volume}, no. {issue}",
         pages_format="pp. {pages}",

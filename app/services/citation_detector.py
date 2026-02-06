@@ -93,6 +93,13 @@ AUTHOR_YEAR_REF_PATTERN = re.compile(
     r'^(?P<authors>[^(]+)\((?P<year>\d{4}[a-z]?)\)\.\s*(?P<title>[^.]+)\.'
 )
 
+# Harvard style reference (year without parentheses): Smith, J., 2020. Title. Journal.
+# Format: Authors, Year. Title. Journal, Volume(Issue), Pages.
+# Capture everything after year to parse title/journal/volume separately
+HARVARD_REF_PATTERN = re.compile(
+    r'^(?P<authors>.+?),\s*(?P<year>(?:19|20)\d{2}[a-z]?)\.\s*(?P<remainder>.+)$'
+)
+
 # Numbered reference: 1. Smith J. Title. Journal. 2020;1(2):3-4.
 NUMBERED_REF_PATTERN = re.compile(
     r'^(?:\[?\d+\]?\.?\s*)(?P<authors>[^.]+)\.\s*(?P<title>[^.]+)\.'
@@ -314,6 +321,30 @@ def _parse_single_reference(entry: str, idx: int) -> Citation:
             doi_url=doi_url,
         )
 
+    # Try Harvard style (year without parentheses): Smith, J., 2020. Title...
+    match = HARVARD_REF_PATTERN.match(entry)
+    if match:
+        authors = _parse_authors(match.group("authors"))
+        year = int(match.group("year")[:4])
+        remainder = match.group("remainder").strip()
+
+        # Parse the remainder into title, journal, volume, issue, pages
+        title, journal, volume, issue, pages = _parse_harvard_remainder(remainder)
+
+        return Citation(
+            id=_make_ref_id(authors[0] if authors else f"ref{idx}", str(year)),
+            raw_text=entry,
+            authors=authors,
+            title=title,
+            year=year,
+            journal=journal,
+            volume=volume,
+            issue=issue,
+            pages=pages,
+            doi=doi,
+            doi_url=doi_url,
+        )
+
     # Try Vancouver/medical style: Smith J, Jones B. Title. Journal 2020;...
     match = VANCOUVER_REF_PATTERN.match(entry)
     if match:
@@ -370,6 +401,12 @@ def _parse_authors(author_string: str) -> list[str]:
     """Parse author string into list of author names."""
     author_string = author_string.strip().rstrip(",")
 
+    # First, try Harvard-style parsing: "LastName, Initials., LastName2, Initials2."
+    # This handles formats like "Salthouse, T.A., Babcock, R.L." or "Cohen, S., & Hoberman, H. M."
+    harvard_authors = _parse_harvard_authors(author_string)
+    if harvard_authors:
+        return harvard_authors
+
     # Split on common separators
     if " & " in author_string:
         authors = author_string.split(" & ")
@@ -382,6 +419,59 @@ def _parse_authors(author_string: str) -> list[str]:
         authors = [author_string]
 
     return [a.strip() for a in authors if a.strip()]
+
+
+def _parse_harvard_authors(author_string: str) -> list[str]:
+    """
+    Parse Harvard-style author string where format is "LastName, Initials".
+
+    Examples:
+    - "Salthouse, T.A., Babcock, R.L." -> ["Salthouse, T.A.", "Babcock, R.L."]
+    - "Cohen, S., & Hoberman, H. M." -> ["Cohen, S.", "Hoberman, H. M."]
+    - "Smith, J., Jones, B., & Williams, C." -> ["Smith, J.", "Jones, B.", "Williams, C."]
+
+    Returns:
+        List of authors, or empty list if not Harvard format
+    """
+    # Remove trailing punctuation
+    author_string = author_string.strip().rstrip(",.")
+
+    # Check if this looks like Harvard format: should have "LastName, Initials" pattern
+    # Initials are typically 1-4 uppercase letters with optional periods
+    initials_pattern = r'[A-Z]\.?\s*[A-Z]?\.?\s*[A-Z]?\.?\s*[A-Z]?\.?'
+
+    # Split by " & " first to handle last author
+    parts = re.split(r'\s*&\s*', author_string)
+
+    authors = []
+    for part in parts:
+        part = part.strip().rstrip(",")
+        if not part:
+            continue
+
+        # Now split this part into individual "LastName, Initials" pairs
+        # Pattern: Look for "Word(s), Initials" where initials are short uppercase sequences
+        # Use regex to find all "LastName, Initials" patterns
+        author_pattern = re.compile(
+            r'([A-Z][a-zA-Z\'\-]+(?:\s+[a-z]+)?(?:\s+[A-Z][a-zA-Z\'\-]+)*),\s*([A-Z]\.?\s*(?:[A-Z]\.?\s*)*)'
+        )
+
+        matches = author_pattern.findall(part)
+        if matches:
+            for last_name, initials in matches:
+                initials = initials.strip().rstrip(",")
+                authors.append(f"{last_name}, {initials}")
+        elif part:
+            # If no pattern match but part exists, it might be a single name
+            # Check if it looks like "LastName, Initials"
+            if re.match(r'^[A-Z][a-zA-Z\'\-]+,\s*[A-Z]', part):
+                authors.append(part)
+
+    # Return parsed authors only if we found valid Harvard-style entries
+    if authors and len(authors) >= 1:
+        return authors
+
+    return []
 
 
 def _parse_vancouver_authors(author_string: str) -> list[str]:
@@ -544,6 +634,158 @@ def _extract_vancouver_metadata(entry: str, title_end: int) -> tuple[Optional[st
                 journal = before_year
 
     return journal, volume, issue, pages
+
+
+def _parse_harvard_remainder(remainder: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """
+    Parse Harvard-style reference remainder into title, journal, volume, issue, pages.
+
+    The remainder after "Authors, Year." contains: "Title. Journal, Volume(Issue), Pages."
+
+    Examples:
+    - "The biology of the human–animal bond. Anim. Front. 4(3), 32–36."
+    - "Advanced Normalization Tools: V1.0. The Insight J., 2, 1-35."
+    - "Title with Oxytocin. Front. Psychol., 3."
+
+    Returns:
+        Tuple of (title, journal, volume, issue, pages)
+    """
+    # Remove DOI from the end first
+    remainder = re.sub(r'\s*(?:doi[:\s]*)?(?:https?://)?(?:dx\.)?doi\.org/\S+', '', remainder, flags=re.IGNORECASE)
+    remainder = re.sub(r'\s*https?://\S+', '', remainder)
+    remainder = remainder.strip()
+
+    if not remainder:
+        return None, None, None, None, None
+
+    # Strategy: Find the volume/pages pattern at the end, then work backwards
+    # Volume patterns to look for:
+    # - "Volume(Issue), Pages" e.g., "4(3), 32-36"
+    # - "Volume, Pages" e.g., "63, 235-248"
+    # - "Volume(Issue)" e.g., "3" (article number, no pages)
+    # - ", Pages" e.g., ", 1-8" (just pages, no volume)
+
+    title = None
+    journal = None
+    volume = None
+    issue = None
+    pages = None
+
+    # Pattern 1: Volume(Issue), Pages - e.g., "4(3), 32–36"
+    vol_issue_pages = re.search(
+        r'[,.\s]\s*(\d+)\s*\(([^)]+)\)\s*,?\s*(\d+[-–]\d+|\d+)\s*\.?\s*$',
+        remainder
+    )
+
+    # Pattern 2: Volume, Pages (no issue) - e.g., "63, 235-248" or "2, 1-35"
+    vol_pages = re.search(
+        r'[,.\s]\s*(\d+)\s*,\s*(\d+[-–]\d+|\d+)\s*\.?\s*$',
+        remainder
+    )
+
+    # Pattern 3: Just Volume (article number) - e.g., ", 3." at end
+    just_vol = re.search(
+        r'[,.\s]\s*(\d+)\s*\.?\s*$',
+        remainder
+    )
+
+    # Pattern 4: Just Pages (no volume) - e.g., ", 1–8."
+    just_pages = re.search(
+        r',\s*(\d+[-–]\d+)\s*\.?\s*$',
+        remainder
+    )
+
+    # Choose the best matching pattern
+    match_end = len(remainder)
+
+    if vol_issue_pages:
+        volume = vol_issue_pages.group(1)
+        issue = vol_issue_pages.group(2)
+        pages = vol_issue_pages.group(3).replace('–', '-')
+        match_end = vol_issue_pages.start()
+    elif vol_pages:
+        volume = vol_pages.group(1)
+        pages = vol_pages.group(2).replace('–', '-')
+        match_end = vol_pages.start()
+    elif just_pages:
+        pages = just_pages.group(1).replace('–', '-')
+        match_end = just_pages.start()
+    elif just_vol:
+        volume = just_vol.group(1)
+        match_end = just_vol.start()
+
+    # Now split the remaining text into title and journal
+    # The journal name is just before the volume/pages
+    before_vol = remainder[:match_end].strip(' ,.')
+
+    if before_vol:
+        # Strategy: Find where the title ends and journal begins
+        # Titles end with ". " followed by journal name
+        # Journal names can contain periods (abbreviations like "J.", "Psychol.")
+        # Key: Journal name is typically short (<50 chars) and at the end before volume
+
+        # Find all ". " positions (potential title ends)
+        # We want the split where the journal part looks like a journal name
+        split_candidates = []
+        for m in re.finditer(r'\.\s+', before_vol):
+            pos = m.start()
+            potential_title = before_vol[:pos + 1].strip()
+            potential_journal = before_vol[m.end():].strip(' .')
+
+            if potential_journal:
+                # Score this split based on how "journal-like" the journal part is
+                # Good signs: short, contains abbreviations, starts with capital
+                # Bad signs: contains lowercase words like "the", "of", "and", "in"
+
+                score = 0
+
+                # Shorter is better for journals (usually < 40 chars)
+                if len(potential_journal) < 40:
+                    score += 3
+                elif len(potential_journal) < 60:
+                    score += 1
+
+                # Journal abbreviations often have periods (J., Psychol., etc.)
+                if re.search(r'\b[A-Z][a-z]*\.', potential_journal):
+                    score += 2
+
+                # Penalize if starts with lowercase (rare for journals)
+                if potential_journal[0].islower():
+                    score -= 3
+
+                # Penalize common title words at the start
+                lower_journal = potential_journal.lower()
+                if lower_journal.startswith(('the ', 'a ', 'an ')):
+                    score -= 2
+                if ' the ' in lower_journal or ' of ' in lower_journal:
+                    score -= 1
+
+                # Title should be longer than journal typically
+                if len(potential_title) > len(potential_journal):
+                    score += 1
+
+                # Penalize if title ends with a single letter abbreviation (like "J.")
+                # This likely means the abbreviation belongs to the journal, not the title
+                if re.search(r'\s[A-Z]\.$', potential_title):
+                    score -= 4
+
+                # Penalize if title ends with common journal abbreviation prefixes
+                if re.search(r'\s(J|Int|Am|Br|Eur|Ann|Arch|Proc|Trans)\.$', potential_title):
+                    score -= 5
+
+                split_candidates.append((pos, m.end(), score, potential_title, potential_journal))
+
+        if split_candidates:
+            # Sort by score (descending), then by position (later is better for journal)
+            split_candidates.sort(key=lambda x: (x[2], x[0]), reverse=True)
+            best = split_candidates[0]
+            title = best[3]
+            journal = best[4]
+        else:
+            # No good split found - treat the whole thing as title
+            title = before_vol
+
+    return title, journal, volume, issue, pages
 
 
 def _extract_doi(text: str) -> Optional[str]:
@@ -750,8 +992,10 @@ def _citations_match(in_text: InTextCitation, reference: Citation, year_toleranc
     if not citation_authors_list or not ref_last_names:
         return CitationMatchDetail(match_type=MatchType.NONE)
 
-    # Track if any part of the match is fuzzy
+    # Track if any part of the match is fuzzy, and which author had the mismatch
     author_is_fuzzy = False
+    fuzzy_citation_author = ""
+    fuzzy_ref_author = ""
 
     # Author matching: Citation's FIRST author must match reference's FIRST author
     citation_first_author = citation_authors_list[0]
@@ -762,6 +1006,8 @@ def _citations_match(in_text: InTextCitation, reference: Citation, year_toleranc
         return CitationMatchDetail(match_type=MatchType.NONE)
     if first_author_match == MatchType.FUZZY:
         author_is_fuzzy = True
+        fuzzy_citation_author = citation_first_author
+        fuzzy_ref_author = ref_first_author
 
     # For two-author citations (Smith & Jones), also verify second author matches
     if len(citation_authors_list) == 2 and len(ref_last_names) >= 2:
@@ -772,6 +1018,10 @@ def _citations_match(in_text: InTextCitation, reference: Citation, year_toleranc
             return CitationMatchDetail(match_type=MatchType.NONE)
         if second_author_match == MatchType.FUZZY:
             author_is_fuzzy = True
+            # Only update if first author wasn't already fuzzy (prioritize showing actual mismatch)
+            if not fuzzy_citation_author:
+                fuzzy_citation_author = citation_second_author
+                fuzzy_ref_author = ref_second_author
 
     # Check year match - allow tolerance for minor year discrepancies
     year_match_ok = False
@@ -804,8 +1054,9 @@ def _citations_match(in_text: InTextCitation, reference: Citation, year_toleranc
         match_type=match_type,
         author_is_fuzzy=author_is_fuzzy,
         year_is_fuzzy=year_is_fuzzy,
-        citation_author=citation_first_author,
-        ref_author=ref_first_author,
+        # Use the actual mismatched author names, or first author if no mismatch
+        citation_author=fuzzy_citation_author if fuzzy_citation_author else citation_first_author,
+        ref_author=fuzzy_ref_author if fuzzy_ref_author else ref_first_author,
         citation_year=citation_year,
         ref_year=reference_year,
     )

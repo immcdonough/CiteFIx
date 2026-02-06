@@ -124,14 +124,51 @@ def _parse_reference_entries(paragraphs: list[str]) -> list[str]:
     # Pattern for new reference start
     # Handles hyphenated names like "Fernandez-Mendoza J" and various Unicode dashes
     # Also handles names with apostrophes like "O'Connor J"
+    # Also handles:
+    # - Lowercase particles: "de Lange, A.", "van der Berg, J.", "von Neumann, J."
+    # - Single-letter abbreviations: "R Core Team" (organization names)
+    # - Corporate/institutional authors: "American Pet Products Association"
     new_ref_pattern = re.compile(
-        r"^(\[\d+\]|\d+\.\s+|[A-Z][a-zA-Z'\-\u2010\u2011\u2012\u2013\u2014]+,?\s+[A-Z])"
+        r"^("
+        r"\[\d+\]|"                                                    # [1] numbered
+        r"\d+\.\s+|"                                                   # 1. numbered
+        r"(?:[a-z]+\s+)*[A-Z][a-zA-Z'\-\u2010\u2011\u2012\u2013\u2014]*,?\s+[A-Z]|"  # Names with optional lowercase particles
+        r"[A-Z]\s+[A-Z][a-z]+\s+"                                     # Single letter + word (e.g., "R Core Team")
+        r")"
+    )
+
+    # Pattern to detect end of references section (figure captions, tables, appendices, etc.)
+    # These indicate we've moved past the actual references
+    end_of_refs_pattern = re.compile(
+        r"^("
+        r"Figure\s*\d|"                    # Figure 1, Figure 2, etc.
+        r"Fig\.\s*\d|"                     # Fig. 1, Fig. 2, etc.
+        r"Figure\s+Captions?|"             # "Figure Captions" header
+        r"Table\s*\d|"                     # Table 1, Table 2, etc.
+        r"Table\s+Captions?|"              # "Table Captions" header
+        r"Appendix|"                       # Appendix sections
+        r"Supplementary|"                  # Supplementary materials
+        r"Supporting\s+Information|"       # Supporting Information
+        r"Acknowledgements?|"              # Acknowledgements section
+        r"Author\s+Contributions?|"        # Author Contributions
+        r"Conflict\s+of\s+Interest|"       # Conflict of Interest
+        r"Data\s+Availability|"            # Data Availability
+        r"Funding"                         # Funding section
+        r")",
+        re.IGNORECASE
     )
 
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
+
+        # Check if we've reached content that's not part of references
+        if end_of_refs_pattern.match(para):
+            # Save any pending entry and stop parsing
+            if current_entry:
+                entries.append(" ".join(current_entry))
+            break
 
         # Check if this starts a new reference
         if new_ref_pattern.match(para):

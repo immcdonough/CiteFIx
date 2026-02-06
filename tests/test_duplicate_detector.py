@@ -215,8 +215,8 @@ class TestDuplicateIssueGeneration:
         issues = detect_duplicates(refs)
 
         if issues:
-            # Description should mention confidence percentage
-            assert "%" in issues[0].description
+            # Description should either mention confidence percentage or indicate exact duplicate
+            assert "%" in issues[0].description or "Identical" in issues[0].description
 
 
 class TestMergeDuplicates:

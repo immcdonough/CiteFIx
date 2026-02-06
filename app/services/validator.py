@@ -301,29 +301,57 @@ def _normalize_reference_key(ref: Citation) -> str:
 
 
 def _check_format_consistency(citations: list[InTextCitation]) -> list[ValidationIssue]:
-    """Check for inconsistent citation formats."""
+    """Check for inconsistent citation formats.
+
+    Note: AUTHOR_YEAR (parenthetical: "(Smith, 2020)") and AUTHOR_YEAR_INLINE
+    (narrative: "Smith (2020)") are both valid author-year styles and mixing them
+    is normal academic writing practice. Only flag true inconsistencies like
+    mixing author-year citations with numeric citations.
+    """
     issues: list[ValidationIssue] = []
 
     if not citations:
         return issues
 
-    # Count citation types
-    type_counts = Counter(c.citation_type for c in citations)
+    # Group citation types into families
+    # - Author-year family: AUTHOR_YEAR and AUTHOR_YEAR_INLINE (mixing these is OK)
+    # - Numeric family: NUMERIC
+    def get_citation_family(cit_type: CitationType) -> str:
+        if cit_type in (CitationType.AUTHOR_YEAR, CitationType.AUTHOR_YEAR_INLINE):
+            return "author_year"
+        return cit_type.value
 
-    # If mixed types, report inconsistency
-    if len(type_counts) > 1:
-        dominant_type = type_counts.most_common(1)[0][0]
-        minority_types = [t for t in type_counts if t != dominant_type]
+    # Count citation families (not individual types)
+    family_counts = Counter(get_citation_family(c.citation_type) for c in citations)
 
-        for minority in minority_types:
-            minority_citations = [c for c in citations if c.citation_type == minority]
-            for citation in minority_citations[:3]:  # Report up to 3 examples
+    # Only flag if mixing different families (e.g., author-year with numeric)
+    if len(family_counts) > 1:
+        dominant_family = family_counts.most_common(1)[0][0]
+        minority_families = [f for f in family_counts if f != dominant_family]
+
+        # Track unique citation texts to avoid duplicate warnings
+        seen_texts: set[str] = set()
+
+        for minority in minority_families:
+            minority_citations = [
+                c for c in citations
+                if get_citation_family(c.citation_type) == minority
+            ]
+            examples_shown = 0
+            for citation in minority_citations:
+                if citation.text in seen_texts:
+                    continue
+                seen_texts.add(citation.text)
+
                 issues.append(ValidationIssue(
                     issue_type="inconsistent_format",
-                    description=f"Citation format ({minority.value}) differs from dominant format ({dominant_type.value})",
+                    description=f"Citation format ({minority}) differs from dominant format ({dominant_family})",
                     citation_text=citation.text,
-                    suggestion=f"Consider reformatting to match {dominant_type.value} style",
+                    suggestion=f"Consider reformatting to match {dominant_family} style",
                 ))
+                examples_shown += 1
+                if examples_shown >= 3:  # Report up to 3 unique examples
+                    break
 
     return issues
 
